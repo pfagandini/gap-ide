@@ -41,6 +41,29 @@ export class Project {
     return real;
   }
 
+  // Before creating directories or files, make sure the deepest part of the
+  // path that already exists really lies inside the root, so a symlinked
+  // directory inside the project cannot be used to write outside it.
+  private async assertExistingAncestorInside(full: string): Promise<void> {
+    const rootReal = await fs.realpath(this.root);
+    const prefix = rootReal.endsWith(path.sep) ? rootReal : rootReal + path.sep;
+    let current = full;
+    for (;;) {
+      try {
+        const real = await fs.realpath(current);
+        if (real !== rootReal && !real.startsWith(prefix)) {
+          throw new Error("Path escapes the project root.");
+        }
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const parent = path.dirname(current);
+        if (parent === current) throw error;
+        current = parent;
+      }
+    }
+  }
+
   async tree(): Promise<TreeNode> {
     const rootNode: TreeNode = {
       name: path.basename(this.root) || this.root,
@@ -107,6 +130,7 @@ export class Project {
     if (content.length > 4 * 1024 * 1024) throw new Error("File is too large to save.");
     const full = this.resolve(relative);
     const parent = path.dirname(full);
+    await this.assertExistingAncestorInside(parent);
     await fs.mkdir(parent, { recursive: true });
     const realParent = await fs.realpath(parent);
     const rootReal = await fs.realpath(this.root);
@@ -130,7 +154,9 @@ export class Project {
     if (!/\.(g|gi|gd|tst|txt|md)$/i.test(full)) {
       throw new Error("New files should end in .g, .gi, .gd, .tst, .txt or .md.");
     }
+    await this.assertExistingAncestorInside(path.dirname(full));
     await fs.mkdir(path.dirname(full), { recursive: true });
+    await this.assertExistingAncestorInside(path.dirname(full));
     await fs.writeFile(full, "", { flag: "wx" });
   }
 

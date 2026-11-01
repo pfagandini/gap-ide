@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import { createReadStream } from "node:fs";
 import { execFile } from "node:child_process";
@@ -40,6 +41,48 @@ async function detectGapVersion() {
 }
 
 const app = Fastify({ logger: false, bodyLimit: 6 * 1024 * 1024 });
+
+// The server runs GAP code and reads/writes files, so it must only answer the
+// local IDE page. Two attacks are blocked here:
+// - Cross-site requests: any web page can open ws://127.0.0.1:<port>/ws (the
+//   browser allows cross-origin WebSockets) and send GAP code, which can run
+//   shell commands via Exec(). Requests carrying a foreign Origin are refused.
+// - DNS rebinding: a hostile domain re-pointed at 127.0.0.1 becomes "same
+//   origin" with itself. Its requests carry its own Host header, so only
+//   loopback Host names are accepted.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const DEV_WEB_PORT = 5173;
+const allowedPorts = new Set([String(port), String(DEV_WEB_PORT)]);
+
+function isLoopbackAuthority(authority: string | undefined): boolean {
+  if (!authority) return false;
+  const match = authority.match(/^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/);
+  if (!match) return false;
+  const [, host, hostPort] = match;
+  return LOOPBACK_HOSTS.has(host.toLowerCase()) && allowedPorts.has(hostPort ?? "80");
+}
+
+app.addHook("onRequest", async (request, reply) => {
+  if (!isLoopbackAuthority(request.headers.host)) {
+    return reply.code(403).send({ error: "Forbidden host." });
+  }
+  const origin = request.headers.origin;
+  if (origin !== undefined) {
+    let ok = false;
+    try {
+      const url = new URL(origin);
+      ok = url.protocol === "http:" && isLoopbackAuthority(url.host);
+    } catch {
+      ok = false;
+    }
+    if (!ok) return reply.code(403).send({ error: "Forbidden origin." });
+  }
+  // WebSocket upgrades from a browser always carry Origin; refuse any that do not.
+  if (request.headers.upgrade && origin === undefined) {
+    return reply.code(403).send({ error: "Missing origin." });
+  }
+});
+
 await app.register(fastifyWebsocket);
 await detectGapVersion();
 
@@ -237,7 +280,7 @@ app.get("/ws", { websocket: true }, (socket: any) => {
   });
 });
 
-const dist = path.join(process.cwd(), "dist");
+const dist = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 if (fs.existsSync(dist)) {
   await app.register(fastifyStatic, {
     root: dist,

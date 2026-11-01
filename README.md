@@ -32,7 +32,19 @@ This is a prototype; see [`PLAN.md`](./PLAN.md) for the longer-term design.
   Noto Sans Mono on Linux). Without one, PDFKit falls back to Courier and
   non-Latin characters are replaced with `?`.
 
-## Run it
+## Run it as an app (no browser tab, no address)
+
+```bash
+scripts/install-desktop.sh ~/path/to/course   # once: app menu entry + ~/.local/bin/gap-ide
+gap-ide [folder]                               # or pick "GAP IDE" in the app menu
+```
+
+`bin/gap-ide` installs and builds on first use, starts the server on a free
+local port, and opens it as a standalone window (Chromium, Chrome or Brave in
+`--app` mode, one private profile per project folder). Closing the window stops
+the server. Logs go to `~/.local/state/gap-ide/server.log`.
+
+## Run it for development
 
 ```bash
 npm install
@@ -121,8 +133,10 @@ examples/
   output, and export.
 - Run history is in memory. Restarting the server or reloading the page keeps
   the GAP session via WebSocket reconnect, but a server restart loses history.
-- The local server has no authentication; keep it bound to `127.0.0.1` and do
-  not expose it to a network.
+- The local server has no authentication. It binds to `127.0.0.1` and refuses
+  requests whose `Host` is not a loopback name (DNS rebinding) or whose
+  `Origin` is another site (a web page opening the WebSocket and running GAP
+  `Exec` commands). Do not expose it to a network.
 - File watching, multiple projects, and PDF documentation viewing are later
   steps in `PLAN.md`.
 

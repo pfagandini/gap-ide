@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Start GAP IDE in its own app window: no terminal, no typing an address.
+#
+#   gap-ide [folder]      project folder (default: current directory)
+#
+# Starts the server on a free local port, opens it as a standalone window
+# (Chromium/Chrome/Brave in --app mode, with a private profile so the window
+# is its own process), and stops the server when the window is closed.
+set -euo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+root="$(readlink -f "${1:-$PWD}")"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/gap-ide"
+mkdir -p "$state"
+log="$state/server.log"
+
+notify() { command -v notify-send >/dev/null && notify-send "GAP IDE" "$1" || true; echo "gap-ide: $1" >&2; }
+
+[ -d "$root" ] || { notify "Not a folder: $root"; exit 1; }
+cd "$here"
+
+# Install/build on first run, and rebuild when the frontend changed.
+if [ ! -d node_modules ]; then
+  npm install --ignore-scripts >>"$log" 2>&1 || { notify "npm install failed, see $log"; exit 1; }
+fi
+if [ ! -f dist/index.html ] || [ -n "$(find src shared index.html -newer dist/index.html -print -quit)" ]; then
+  npm run build >>"$log" 2>&1 || { notify "Build failed, see $log"; exit 1; }
+fi
+
+port="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+url="http://127.0.0.1:$port"
+
+echo "=== $(date -Is) root=$root port=$port" >>"$log"
+node_modules/.bin/tsx server/index.ts --root "$root" --port "$port" >>"$log" 2>&1 &
+server=$!
+trap 'kill "$server" 2>/dev/null; wait "$server" 2>/dev/null || true' EXIT
+
+for _ in $(seq 100); do
+  curl -fs "$url/api/info" >/dev/null 2>&1 && break
+  kill -0 "$server" 2>/dev/null || { notify "Server did not start, see $log"; exit 1; }
+  sleep 0.1
+done
+
+# One browser profile per project folder, so two projects can be open at once
+# (a shared profile would hand the second window to the first process).
+profile="$state/profiles/$(printf '%s' "$root" | sha1sum | cut -c1-12)"
+args=(--app="$url" --user-data-dir="$profile" --class=gap-ide --no-first-run --no-default-browser-check)
+for browser in chromium-browser chromium google-chrome-stable google-chrome brave-browser; do
+  if command -v "$browser" >/dev/null; then
+    "$browser" "${args[@]}" >>"$log" 2>&1
+    exit 0
+  fi
+done
+if command -v flatpak >/dev/null && flatpak info com.brave.Browser >/dev/null 2>&1; then
+  flatpak run com.brave.Browser "${args[@]}" >>"$log" 2>&1
+  exit 0
+fi
+
+# No Chromium-family browser: open a normal tab and keep the server up until Ctrl+C.
+xdg-open "$url" >/dev/null 2>&1 || true
+echo "GAP IDE at $url (Ctrl+C to stop)"
+wait "$server"

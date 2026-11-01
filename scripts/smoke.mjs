@@ -3,7 +3,10 @@
 import fs from "node:fs";
 import WebSocket from "ws";
 
-const ws = new WebSocket("ws://127.0.0.1:3001/ws");
+const port = process.env.GAP_IDE_PORT || "3001";
+const base = `http://127.0.0.1:${port}`;
+// The server refuses WebSockets without a local Origin (see server/index.ts).
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: base });
 let runId = null;
 let stdout = "";
 let stderr = "";
@@ -43,7 +46,7 @@ ws.on("message", async (data) => {
       process.exit(1);
     }
 
-    const response = await fetch("http://127.0.0.1:3001/api/export/pdf", {
+    const response = await fetch(`${base}/api/export/pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -75,6 +78,6 @@ ws.on("message", async (data) => {
 });
 
 ws.on("error", () => {
-  console.error("Could not connect. Is the server running on 127.0.0.1:3001?");
+  console.error(`Could not connect. Is the server running on 127.0.0.1:${port}?`);
   process.exit(1);
 });
