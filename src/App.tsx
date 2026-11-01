@@ -13,6 +13,7 @@ import { OutputPanel } from "./OutputPanel";
 import { ConsolePanel } from "./ConsolePanel";
 import { ExportDialog, type ExportMeta } from "./ExportDialog";
 import { LatexDialog } from "./LatexDialog";
+import { NewFileDialog } from "./NewFileDialog";
 
 interface OpenFile {
   path: string;
@@ -40,6 +41,7 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null);
   const [exportIds, setExportIds] = useState<string[] | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [newFileOpen, setNewFileOpen] = useState(false);
   const [latex, setLatex] = useState<{ text: string; count: number } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const editorApi = useRef<EditorApi | null>(null);
@@ -139,6 +141,9 @@ export default function App() {
         );
       } else if (message.type === "session_state") {
         setSessionState(message.state);
+        if (message.gapVersion && message.gapVersion !== "unknown") {
+          setGapVersion(message.gapVersion);
+        }
         if (message.state !== "running") setBusyLabel(null);
         if (message.state === "failed" && message.message) {
           setBanner(message.message);
@@ -363,21 +368,15 @@ export default function App() {
     }
   };
 
-  const createFile = async () => {
-    const path = window.prompt("New file (relative to project root):", "new.g");
-    if (!path) return;
-    try {
-      const response = await fetch("/api/file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path })
-      });
-      if (!response.ok) throw new Error(await errorText(response));
-      await fetchTree();
-      await openFile(path);
-    } catch (error) {
-      setBanner(messageOf(error));
-    }
+  const createFile = async (path: string) => {
+    const response = await fetch("/api/file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path })
+    });
+    if (!response.ok) throw new Error(await errorText(response));
+    await fetchTree();
+    await openFile(path);
   };
 
   const toggleSelected = (id: string) => {
@@ -547,7 +546,7 @@ export default function App() {
           tree={tree}
           activePath={activePath}
           onOpen={(path) => void openFile(path)}
-          onNewFile={() => void createFile()}
+          onNewFile={() => setNewFileOpen(true)}
           onRefresh={() => void fetchTree()}
         />
 
@@ -699,6 +698,10 @@ export default function App() {
           </>
         )}
       </footer>
+
+      {newFileOpen && (
+        <NewFileDialog onClose={() => setNewFileOpen(false)} onCreate={createFile} />
+      )}
 
       {latex && (
         <LatexDialog text={latex.text} count={latex.count} onClose={() => setLatex(null)} />

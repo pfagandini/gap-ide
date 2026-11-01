@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { GapLauncher } from "./launcher";
 import { randomUUID } from "node:crypto";
 import type { Run, RunKind, RunStatus, SessionState } from "../shared/types";
 
@@ -151,7 +152,8 @@ interface SessionEvents {
 
 interface SessionOptions {
   root: string;
-  gapPath: string;
+  /** How to start GAP, or why it could not be found. */
+  launcher: GapLauncher | { error: string };
   events: SessionEvents;
 }
 
@@ -169,6 +171,12 @@ export class GapSession {
   private cancelled = false;
   private runs: Run[] = [];
   private breakCount = 0;
+  /** GAP's PID inside a wrapper (Cygwin/WSL), from the "@@pid N" line. */
+  private gapPid: string | null = null;
+  private pidBuffer = "";
+  /** Collects output printed outside any run (startup queries). */
+  private capture: string | null = null;
+  private version = "unknown";
   // File runs print errors on the normal stream (see runFile), so they are
   // spotted from the text instead.
   private sawErrorText = false;
@@ -183,6 +191,15 @@ export class GapSession {
 
   getState() {
     return this.state;
+  }
+
+  getVersion() {
+    return this.version;
+  }
+
+  describeLauncher() {
+    const launcher = this.options.launcher;
+    return "error" in launcher ? "not found" : launcher.description;
   }
 
   getRuns() {
@@ -204,13 +221,23 @@ export class GapSession {
     this.decoder.reset();
     this.setState("starting");
 
+    const launcher = this.options.launcher;
+    if ("error" in launcher) {
+      this.started = false;
+      this.setState("failed", launcher.error);
+      return;
+    }
+    this.gapPid = null;
+    this.pidBuffer = "";
+
     const child = spawn(
-      this.options.gapPath,
-      ["-q", "-b", "-p", "-T", "-E", "-x", "120"],
+      launcher.command,
+      launcher.args(["-q", "-b", "-p", "-T", "-E", "-x", "120"]),
       {
         cwd: this.options.root,
-        env: { ...process.env, TERM: "dumb" },
-        stdio: ["pipe", "pipe", "pipe"]
+        env: { ...process.env, TERM: "dumb", ...launcher.env },
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true
       }
     );
     this.child = child;
@@ -218,7 +245,18 @@ export class GapSession {
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      if (this.child === child) this.decoder.push(chunk);
+      if (this.child !== child) return;
+      if (launcher.reportsPid && this.gapPid === null) {
+        // The wrapper's first line is "@@pid N"; everything after is GAP.
+        this.pidBuffer += chunk;
+        const match = this.pidBuffer.match(/@@pid (\d+)\r?\n/);
+        if (!match || match.index === undefined) return;
+        this.gapPid = match[1];
+        chunk = this.pidBuffer.slice(match.index + match[0].length);
+        this.pidBuffer = "";
+        if (!chunk) return;
+      }
+      this.decoder.push(chunk);
     });
     child.stderr.on("data", (chunk: string) => {
       if (this.child === child && this.state === "starting") {
@@ -249,12 +287,17 @@ export class GapSession {
       await this.waitForReady(15_000);
       await this.writeAndWait('SetUserPreference("UseColorsInTerminal", false);;\n', 5_000);
       await this.writeAndWait('SizeScreen([120, 40]);;\n', 5_000);
+      this.capture = "";
+      await this.writeAndWait('Print("GAPIDE-VERSION ", GAPInfo.Version, "\\n");;\n', 5_000);
+      const version = this.capture.match(/GAPIDE-VERSION (\S+)/);
+      if (version) this.version = version[1];
+      this.capture = null;
       // Only advertise readiness after the setup commands have completed.
       this.setState("idle");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.child?.kill("SIGTERM");
-      this.child = null;
+      this.capture = null;
+      this.stopChild();
       this.setState("failed", message);
     }
   }
@@ -264,8 +307,7 @@ export class GapSession {
     this.finishRunIfActive("interrupted", "Session restarted.");
     this.rejectPendingReady(new Error("Session restarted."));
     this.stopping = true;
-    this.child?.kill("SIGTERM");
-    this.child = null;
+    this.stopChild();
     this.started = false;
     this.state = "starting";
     this.readyPromise = null;
@@ -281,15 +323,51 @@ export class GapSession {
   async shutdown() {
     this.stopping = true;
     this.rejectPendingReady(new Error("Session stopped."));
-    this.child?.kill("SIGTERM");
+    this.stopChild();
+  }
+
+  /**
+   * Ends the current GAP process. Behind a wrapper (Cygwin/WSL) killing the
+   * wrapper may leave GAP running, so GAP itself is asked to quit and then
+   * killed by PID.
+   */
+  private stopChild() {
+    const child = this.child;
+    const pid = this.gapPid;
     this.child = null;
+    this.gapPid = null;
+    if (!child) return;
+    const launcher = this.options.launcher;
+    try {
+      if (!child.stdin.destroyed) child.stdin.end("QUIT;\n");
+    } catch {
+      // already gone
+    }
+    if (!("error" in launcher) && launcher.signalCommand && pid) {
+      const { command, args } = launcher.signalCommand(pid, "KILL");
+      setTimeout(() => {
+        execFile(command, args, { windowsHide: true }, () => child.kill());
+      }, 1500);
+    } else {
+      child.kill("SIGTERM");
+    }
+  }
+
+  private sendInterrupt() {
+    const launcher = this.options.launcher;
+    if (!("error" in launcher) && launcher.signalCommand && this.gapPid) {
+      const { command, args } = launcher.signalCommand(this.gapPid, "INT");
+      execFile(command, args, { windowsHide: true }, () => {});
+    } else {
+      this.child?.kill("SIGINT");
+    }
   }
 
   async interrupt() {
     if (!this.child || !this.activeRun) return;
     this.interrupted = true;
     this.cancelled = true;
-    this.child.kill("SIGINT");
+    this.sendInterrupt();
     try {
       await this.waitForReady(3_000);
     } catch {
@@ -309,7 +387,9 @@ export class GapSession {
     const run = this.newRun("file", displayPath, code, displayPath);
     this.beginRun(run);
     try {
-      const escaped = filePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const launcher = this.options.launcher;
+      const gapPath = "error" in launcher ? filePath : launcher.toGapPath(filePath);
+      const escaped = gapPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       // Not Read(): that has script semantics and prints nothing for
       // `Size(G);`. READ_STREAM_LOOP evaluates the file statement by statement
       // like the gap> prompt: values are echoed, `;;` stays silent, and an
@@ -424,7 +504,10 @@ export class GapSession {
 
   private handleOutput(stream: StreamName, text: string) {
     const run = this.activeRun;
-    if (!run) return;
+    if (!run) {
+      if (this.capture !== null) this.capture += text;
+      return;
+    }
     // File runs read from a stream, so GAP reports error locations as
     // "stream:LINE"; show the file name instead.
     if (run.kind === "file") {
@@ -455,7 +538,7 @@ export class GapSession {
     if (this.breakCount <= 2) {
       this.child?.stdin.write("q\n");
     } else {
-      this.child?.kill("SIGINT");
+      this.sendInterrupt();
     }
   }
 

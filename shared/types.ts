@@ -73,5 +73,5 @@ export type ServerMsg =
       durationMs: number;
     }
   | { type: "runs_cleared"; kind: RunKind }
-  | { type: "session_state"; state: SessionState; message?: string }
+  | { type: "session_state"; state: SessionState; message?: string; gapVersion?: string }
   | { type: "error"; message: string };

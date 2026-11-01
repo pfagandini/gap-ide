@@ -11,27 +11,41 @@ const CODE_SIZE = 8;
 const LINE_HEIGHT = 10;
 const TEXT_SIZE = 10;
 
+const WINDOWS_FONTS = `${process.env.WINDIR || "C:\\Windows"}\\Fonts`;
+
 const MONO_FONTS = [
   "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
   "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
   "/usr/share/fonts/dejavu-lgc-sans-mono-fonts/DejaVuLGCSansMono.ttf",
   "/usr/share/fonts/google-noto/NotoSansMono-Regular.ttf",
   "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-  "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf"
+  "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+  // macOS
+  "/System/Library/Fonts/Supplemental/Courier New.ttf",
+  "/Library/Fonts/Courier New.ttf",
+  // Windows
+  `${WINDOWS_FONTS}\\consola.ttf`,
+  `${WINDOWS_FONTS}\\cour.ttf`
 ];
 
 const SANS_FONTS = [
   "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-  "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+  "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+  "/System/Library/Fonts/Supplemental/Arial.ttf",
+  "/Library/Fonts/Arial.ttf",
+  `${WINDOWS_FONTS}\\arial.ttf`
 ];
 
 const SANS_BOLD_FONTS = [
   "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
   "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
   "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
-  "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+  "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+  "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+  "/Library/Fonts/Arial Bold.ttf",
+  `${WINDOWS_FONTS}\\arialbd.ttf`
 ];
 
 function firstExisting(candidates: string[]): string | undefined {
