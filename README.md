@@ -169,3 +169,7 @@ The API is intentionally small:
 - `GET /api/info`
 - `WS /ws` with `run_file`, `eval`, `eval_blocks`, `clear_runs`, `interrupt`,
   `restart`
+
+## License
+
+MIT, see [`LICENSE`](./LICENSE).

@@ -42,5 +42,6 @@
   },
   "overrides": {
     "glob": "^14.0.3"
-  }
+  },
+  "license": "MIT"
 }
