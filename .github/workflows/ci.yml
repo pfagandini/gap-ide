@@ -51,8 +51,15 @@ jobs:
           if (-not (Test-Path gap-installer.exe)) {
             Invoke-WebRequest -Uri "https://github.com/gap-system/gap/releases/download/v$env:GAP_WINDOWS_VERSION/gap-$env:GAP_WINDOWS_VERSION-x86_64.exe" -OutFile gap-installer.exe
           }
-          Start-Process -Wait -FilePath .\gap-installer.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=C:\GAP-$env:GAP_WINDOWS_VERSION"
-          Get-ChildItem "C:\GAP-$env:GAP_WINDOWS_VERSION"
+          # Default folder on purpose: the IDE must find GAP where users get it.
+          $p = Start-Process -Wait -PassThru -FilePath .\gap-installer.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/LOG=$env:RUNNER_TEMP\gap-install.log"
+          "installer exit code: $($p.ExitCode)"
+          $found = Get-ChildItem -Path "$env:ProgramFiles","$env:LOCALAPPDATA","$env:LOCALAPPDATA\Programs","C:\" -Directory -Filter "GAP*" -ErrorAction SilentlyContinue
+          $found | ForEach-Object { $_.FullName; Test-Path (Join-Path $_.FullName "runtime\bin\bash.exe") }
+          if (-not ($found | Where-Object { Test-Path (Join-Path $_.FullName "runtime\bin\bash.exe") })) {
+            Get-Content "$env:RUNNER_TEMP\gap-install.log" -Tail 60
+            throw "GAP was not installed"
+          }
 
       - run: npm ci
       - run: npm run build

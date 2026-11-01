@@ -46,7 +46,7 @@ GAP itself is not bundled. Install it first:
 | OS | How to install GAP | How GAP IDE finds it |
 |---|---|---|
 | macOS | `brew install gap-system/gap/gap` ([other ways](https://www.gap-system.org/install/mac/)) | `gap` in Homebrew's folders or on your shell's `PATH` |
-| Windows | the [official installer](https://www.gap-system.org/install/windows/) (`gap-4.x.y-x86_64.exe`) | the newest `GAP-4.x.y` folder in Program Files, your user programs folder or `C:\` |
+| Windows | the [official installer](https://www.gap-system.org/install/windows/) (`gap-4.x.y-x86_64.exe`) | the newest `GAP-4.x.y` folder in Program Files, `%LOCALAPPDATA%` (the "just for me" install) or `C:\` |
 | Windows (WSL) | `gap` inside the Windows Subsystem for Linux | **GAP → Use GAP from WSL** |
 | Linux | your package manager, or from source | `gap` on `PATH` |
 

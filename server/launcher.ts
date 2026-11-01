@@ -158,6 +158,8 @@ function findCygwinGap(): string | null {
   const bases = [
     process.env.ProgramFiles,
     process.env["ProgramFiles(x86)"],
+    // "Install just for the current user" puts it straight in %LOCALAPPDATA%.
+    process.env.LOCALAPPDATA,
     process.env.LOCALAPPDATA && path.win32.join(process.env.LOCALAPPDATA, "Programs"),
     "C:\\"
   ].filter((value): value is string => !!value);
