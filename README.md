@@ -9,8 +9,18 @@ This is a prototype; see [`PLAN.md`](./PLAN.md) for the longer-term design.
 ## Features
 
 - File tree, tabs, save, and GAP syntax highlighting in CodeMirror 6.
-- **Run file (F5)**: saves the buffer and executes it with `Read(...)` in a
-  persistent GAP session. Output and errors stream into the **Output** panel.
+- **Run file (F5)**: saves the buffer and runs it in a persistent GAP session,
+  printing each result as the `gap>` prompt would. Output and errors stream into the **Output** panel.
+- **Cells, notebook style (Shift+Enter)**: a cell is a block of lines between
+  blank lines. Shift+Enter runs the cell under the cursor, shows its output
+  right below it in the editor, and moves to the next cell. **Run all cells**
+  (Ctrl+Shift+Enter) runs every cell in order. Re-running a cell replaces its
+  output; × hides one. The file itself stays a plain `.g` file.
+- **Export LaTeX**: the cells shown with output, in file order, as a GAP
+  session (`gap> ` input, output below) inside `\begin{verbatim}`, ready to
+  copy into a LaTeX assignment.
+- **Clear** empties the Output or Console panel (clearing the Console also
+  removes the outputs shown in the editor).
 - **Run selection (Ctrl+Enter)**: sends the current line or selection to the
   same session's stdin, so it behaves like the GAP REPL (`2+2;` prints `4`).
   Output goes to the **Console** panel.
@@ -93,10 +103,11 @@ gap -q -b -p -T -E -x 120
 input echo. `-T` disables the interactive break loop so errors return to the top
 level, and SIGINT interrupts a long computation cleanly.
 
-File runs use `Read("absolute/path.g")` and therefore have script semantics:
-output only comes from `Print`/`View`, exactly as when GAP runs a file. Selection
-and console runs go through stdin and therefore echo expression values like the
-REPL.
+File runs read the file statement by statement with `READ_STREAM_LOOP`, so
+they behave like pasting the file at the `gap>` prompt: `Size(G);` prints its
+value, `;;` stays silent, and an error is reported (as `file.g:LINE`) without
+stopping the rest of the file. Selection and console runs go through stdin and
+echo values the same way.
 
 Every run stores a snapshot of the code that was executed. PDF export renders
 those snapshots plus stdout/stderr with PDFKit, so editing the file afterwards
@@ -154,5 +165,7 @@ The API is intentionally small:
 
 - `GET /api/tree`, `GET/PUT/POST /api/file`, `GET /api/download`
 - `POST /api/export/pdf` with `{ runIds?, title?, author?, course? }`
+- `POST /api/export/latex` with `{ runIds }` returns `{ text }`
 - `GET /api/info`
-- `WS /ws` with `run_file`, `eval`, `interrupt`, `restart`
+- `WS /ws` with `run_file`, `eval`, `eval_blocks`, `clear_runs`, `interrupt`,
+  `restart`

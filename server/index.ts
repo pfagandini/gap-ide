@@ -10,6 +10,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import { Project } from "./project";
 import { GapSession } from "./gap";
 import { renderRunsPdf } from "./pdf";
+import { runsToLatexVerbatim } from "./latex";
 import type { ClientMsg, ServerMsg } from "../shared/types";
 
 const execFileAsync = promisify(execFile);
@@ -225,6 +226,22 @@ app.post("/api/export/pdf", async (request, reply) => {
   }
 });
 
+// The given runs, in the given order, as a LaTeX verbatim GAP transcript.
+app.post("/api/export/latex", async (request, reply) => {
+  const body = (request.body ?? {}) as { runIds?: unknown };
+  if (!Array.isArray(body.runIds)) {
+    return reply.code(400).send({ error: "Expected { runIds: [...] }." });
+  }
+  const byId = new Map(session.getRuns().map((run) => [run.id, run]));
+  const runs = body.runIds
+    .map((id) => byId.get(String(id)))
+    .filter((run): run is NonNullable<typeof run> => !!run && run.status !== "running");
+  if (runs.length === 0) {
+    return reply.code(400).send({ error: "There are no completed runs to export." });
+  }
+  return { text: runsToLatexVerbatim(runs) };
+});
+
 app.get("/ws", { websocket: true }, (socket: any) => {
   clients.add(socket);
   socket.send(
@@ -265,6 +282,29 @@ app.get("/ws", { websocket: true }, (socket: any) => {
           message.sourcePath,
           message.startLine
         );
+      } else if (message.type === "eval_blocks") {
+        // "Run all cells": evaluate each block as its own run, so its output
+        // can be shown under that block. Like pasting into GAP, an error does
+        // not stop the rest; Stop (interrupt) does.
+        if (session.isBusy()) {
+          broadcast({ type: "error", message: "The GAP session is busy." });
+          return;
+        }
+        if (typeof message.sourcePath !== "string" || !Array.isArray(message.blocks)) return;
+        for (const block of message.blocks) {
+          if (typeof block?.code !== "string" || typeof block.startLine !== "number") continue;
+          const run = await session.eval(
+            block.code,
+            String(block.label ?? ""),
+            message.sourcePath,
+            block.startLine
+          );
+          if (run.status === "interrupted" || run.status === "exited") break;
+        }
+      } else if (message.type === "clear_runs") {
+        if (message.kind !== "file" && message.kind !== "console") return;
+        session.clearRuns(message.kind);
+        broadcast({ type: "runs_cleared", kind: message.kind });
       } else if (message.type === "interrupt") {
         await session.interrupt();
       } else if (message.type === "restart") {

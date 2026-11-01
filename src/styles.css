@@ -910,3 +910,121 @@ kbd {
     display: none;
   }
 }
+
+/* ---- Inline (notebook-style) output under the code ---- */
+.inline-wrap {
+  padding: 4px 12px 8px 0;
+}
+
+.inline-output {
+  border-left: 3px solid #2f6aa3;
+  background: #111821;
+  border-radius: 0 6px 6px 0;
+  padding: 4px 10px 6px;
+  font-family: "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+  cursor: default;
+}
+
+.inline-output.status-error {
+  border-left-color: #c2474f;
+}
+
+.inline-output.status-interrupted,
+.inline-output.status-exited {
+  border-left-color: #c9a227;
+}
+
+.inline-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: system-ui, sans-serif;
+  font-size: 10.5px;
+  margin-bottom: 2px;
+  opacity: 0.8;
+}
+
+.inline-close {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.inline-close:hover {
+  color: var(--text);
+}
+
+.inline-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+  color: #d6dde8;
+}
+
+.inline-stderr {
+  color: #ff9a9f;
+}
+
+.inline-empty {
+  font-size: 11.5px;
+}
+
+/* ---- Panel Clear button ---- */
+.panel-tabs > button.panel-clear {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 11.5px;
+}
+
+.panel-tabs > button.panel-clear:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.panel-tabs > button.panel-clear:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* ---- LaTeX export dialog ---- */
+.modal.modal-wide {
+  width: min(760px, 100%);
+}
+
+.latex-text {
+  width: 100%;
+  height: min(55vh, 460px);
+  resize: vertical;
+  background: #0e131b;
+  border: 1px solid #2d3a4d;
+  border-radius: 6px;
+  color: var(--text);
+  padding: 9px 10px;
+  font-family: "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.icon-button.active {
+  color: var(--text);
+  border-color: #2d3a4d;
+  background: #1b2432;
+}
+
+.icon-button.tree-filter {
+  font-size: 11px;
+}

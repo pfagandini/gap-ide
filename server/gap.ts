@@ -20,6 +20,10 @@ interface DecoderEvents {
 export class GapProtocolDecoder {
   private buffer = "";
   private target: StreamName | "discard" = "discard";
+  // True while inside an @r input echo. The echo of one line ends at its @J;
+  // output written straight to OutputTextUser() (e.g. READ_STREAM_LOOP in file
+  // runs) follows without a fresh @n, so it is normal output.
+  private inEcho = false;
   private capability = false;
 
   constructor(private readonly events: DecoderEvents) {}
@@ -28,6 +32,7 @@ export class GapProtocolDecoder {
     this.buffer = "";
     this.target = "discard";
     this.capability = false;
+    this.inEcho = false;
   }
 
   push(chunk: string) {
@@ -62,13 +67,20 @@ export class GapProtocolDecoder {
         case "r":
           this.target =
             code === "n" ? "stdout" : code === "f" ? "stderr" : "discard";
+          this.inEcho = code === "r";
           this.buffer = this.buffer.slice(2);
           break;
         case "J":
-          if (this.target !== "discard") this.events.output(this.target, "\n");
+          if (this.inEcho) {
+            this.inEcho = false;
+            this.target = "stdout";
+          } else if (this.target !== "discard") {
+            this.events.output(this.target, "\n");
+          }
           this.buffer = this.buffer.slice(2);
           break;
         case "i":
+          this.inEcho = false;
           this.target = "discard";
           this.buffer = this.buffer.slice(2);
           this.events.ready();
@@ -157,6 +169,9 @@ export class GapSession {
   private cancelled = false;
   private runs: Run[] = [];
   private breakCount = 0;
+  // File runs print errors on the normal stream (see runFile), so they are
+  // spotted from the text instead.
+  private sawErrorText = false;
 
   constructor(private readonly options: SessionOptions) {
     this.decoder = new GapProtocolDecoder({
@@ -172,6 +187,11 @@ export class GapSession {
 
   getRuns() {
     return this.runs;
+  }
+
+  /** Forget finished runs of one kind (the panel's Clear button). */
+  clearRuns(kind: RunKind) {
+    this.runs = this.runs.filter((run) => run.kind !== kind || run.status === "running");
   }
 
   isBusy() {
@@ -290,7 +310,16 @@ export class GapSession {
     this.beginRun(run);
     try {
       const escaped = filePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      await this.writeAndWait(`Read("${escaped}");\n`);
+      // Not Read(): that has script semantics and prints nothing for
+      // `Size(G);`. READ_STREAM_LOOP evaluates the file statement by statement
+      // like the gap> prompt: values are echoed, `;;` stays silent, and an
+      // error does not stop the rest of the file (as when pasting into GAP).
+      // Assignments go to the global scope, so the console sees them.
+      await this.writeAndWait(
+        `CallFuncList(function() local s; s := InputTextFile("${escaped}"); ` +
+          `if s = fail then Error("cannot open file"); fi; ` +
+          `READ_STREAM_LOOP(s, OutputTextUser(), false); CloseStream(s); end, []);;\n`
+      );
       this.finishRun(run, this.statusForRun());
       return run;
     } catch (error) {
@@ -309,11 +338,14 @@ export class GapSession {
     if (!this.child) throw new Error("The GAP session is not running.");
 
     const run = this.newRun("console", label, code, sourcePath, startLine);
+    run.transcript = [];
     this.beginRun(run);
     try {
       const lines = code.split(/\r?\n/);
       for (const line of lines) {
         if (this.cancelled) break;
+        // Output arriving before GAP asks for the next line belongs to this one.
+        run.transcript.push({ input: line, output: "" });
         // Blank lines are sent too: GAP answers them with @i, and preserving
         // them matters inside multi-line strings.
         await this.writeAndWait(`${line}\n`);
@@ -352,6 +384,7 @@ export class GapSession {
     this.interrupted = false;
     this.cancelled = false;
     this.breakCount = 0;
+    this.sawErrorText = false;
     this.runs.push(run);
     this.setState("running");
     this.options.events.runStarted(run);
@@ -379,7 +412,7 @@ export class GapSession {
   private statusForRun(): RunStatus {
     if (this.interrupted) return "interrupted";
     const run = this.activeRun;
-    if (run && run.stderr.trim().length > 0) return "error";
+    if (run && (run.stderr.trim().length > 0 || this.sawErrorText)) return "error";
     return "ok";
   }
 
@@ -392,6 +425,16 @@ export class GapSession {
   private handleOutput(stream: StreamName, text: string) {
     const run = this.activeRun;
     if (!run) return;
+    // File runs read from a stream, so GAP reports error locations as
+    // "stream:LINE"; show the file name instead.
+    if (run.kind === "file") {
+      const name = run.label.split("/").pop() ?? run.label;
+      text = text.replace(/\bstream:(\d+)/g, `${name}:$1`);
+      if (/^(Error, |Syntax error)/m.test(text)) this.sawErrorText = true;
+    }
+    if (run.transcript && run.transcript.length > 0) {
+      run.transcript[run.transcript.length - 1].output += text;
+    }
     if (stream === "stdout") run.stdout += text;
     else run.stderr += text;
     this.options.events.runOutput(run.id, stream, text);

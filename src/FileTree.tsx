@@ -9,7 +9,32 @@ interface FileTreeProps {
   onRefresh: () => void;
 }
 
+const GAP_FILE = /\.(g|gi|gd|tst)$/i;
+
+/** The tree with only GAP files, dropping folders that end up empty. */
+function gapOnly(node: TreeNode): TreeNode | null {
+  if (node.type === "file") return GAP_FILE.test(node.name) ? node : null;
+  const children = (node.children ?? [])
+    .map(gapOnly)
+    .filter((child): child is TreeNode => child !== null);
+  return children.length > 0 || node.path === "" ? { ...node, children } : null;
+}
+
+const SHOW_ALL_KEY = "gap-ide-show-all-files";
+
 export function FileTree(props: FileTreeProps) {
+  const [showAll, setShowAll] = useState(
+    () => localStorage.getItem(SHOW_ALL_KEY) === "1"
+  );
+  const toggleShowAll = () => {
+    setShowAll((value) => {
+      localStorage.setItem(SHOW_ALL_KEY, value ? "0" : "1");
+      return !value;
+    });
+  };
+  const tree = props.tree && !showAll ? gapOnly(props.tree) : props.tree;
+  const empty = !!tree && (tree.children ?? []).length === 0;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
@@ -18,15 +43,26 @@ export function FileTree(props: FileTreeProps) {
           <button className="icon-button" title="New file" onClick={props.onNewFile}>
             +
           </button>
+          <button
+            className={`icon-button tree-filter ${showAll ? "" : "active"}`}
+            title={
+              showAll
+                ? "Showing all files. Click to show only GAP files (.g, .gi, .gd, .tst)"
+                : "Showing only GAP files (.g, .gi, .gd, .tst). Click to show all files"
+            }
+            onClick={toggleShowAll}
+          >
+            {showAll ? "All" : ".g"}
+          </button>
           <button className="icon-button" title="Refresh" onClick={props.onRefresh}>
             ↻
           </button>
         </div>
       </div>
       <div className="tree">
-        {props.tree ? (
+        {tree ? (
           <TreeDir
-            node={props.tree}
+            node={tree}
             depth={0}
             activePath={props.activePath}
             onOpen={props.onOpen}
@@ -34,6 +70,12 @@ export function FileTree(props: FileTreeProps) {
           />
         ) : (
           <div className="muted pad">Loading…</div>
+        )}
+        {empty && !showAll && (
+          <div className="muted pad">
+            No GAP files here yet. Use + to create one, or click <b>.g</b> to show
+            all files.
+          </div>
         )}
       </div>
     </aside>

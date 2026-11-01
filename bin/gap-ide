@@ -27,32 +27,68 @@ if [ ! -f dist/index.html ] || [ -n "$(find src shared index.html -newer dist/in
   npm run build >>"$log" 2>&1 || { notify "Build failed, see $log"; exit 1; }
 fi
 
+# One browser profile and one server per project folder.
+key="$(printf '%s' "$root" | sha1sum | cut -c1-12)"
+profile="$state/profiles/$key"
+instance="$state/instances/$key"   # holds the port of the running server
+mkdir -p "$state/instances"
+
+find_browser() {
+  for b in chromium-browser chromium google-chrome-stable google-chrome brave-browser; do
+    command -v "$b" >/dev/null && { echo "$b"; return; }
+  done
+  if command -v flatpak >/dev/null && flatpak info com.brave.Browser >/dev/null 2>&1; then
+    echo "flatpak run com.brave.Browser"
+  fi
+}
+browser="$(find_browser)"
+
+open_window() {  # $1 = url; returns when that browser process exits
+  # shellcheck disable=SC2086  # $browser may be "flatpak run ..."
+  $browser --app="$1" --user-data-dir="$profile" --class=gap-ide \
+    --no-first-run --no-default-browser-check >>"$log" 2>&1
+}
+
+# PID of the browser holding this profile, if it is still running.
+profile_browser_pid() {
+  local lock pid
+  lock="$(readlink "$profile/SingletonLock" 2>/dev/null)" || return 1
+  pid="${lock##*-}"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+}
+
+# Already running for this folder: just open another window on that server.
+if [ -n "$browser" ] && [ -f "$instance" ]; then
+  old_port="$(cat "$instance")"
+  if curl -fs "http://127.0.0.1:$old_port/api/info" >/dev/null 2>&1; then
+    echo "=== $(date -Is) reuse port=$old_port" >>"$log"
+    open_window "http://127.0.0.1:$old_port"
+    exit 0
+  fi
+fi
+
 port="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
 url="http://127.0.0.1:$port"
 
 echo "=== $(date -Is) root=$root port=$port" >>"$log"
 node_modules/.bin/tsx server/index.ts --root "$root" --port "$port" >>"$log" 2>&1 &
 server=$!
-trap 'kill "$server" 2>/dev/null; wait "$server" 2>/dev/null || true' EXIT
+trap 'rm -f "$instance"; kill "$server" 2>/dev/null; wait "$server" 2>/dev/null || true' EXIT
 
 for _ in $(seq 100); do
   curl -fs "$url/api/info" >/dev/null 2>&1 && break
   kill -0 "$server" 2>/dev/null || { notify "Server did not start, see $log"; exit 1; }
   sleep 0.1
 done
+echo "$port" >"$instance"
 
-# One browser profile per project folder, so two projects can be open at once
-# (a shared profile would hand the second window to the first process).
-profile="$state/profiles/$(printf '%s' "$root" | sha1sum | cut -c1-12)"
-args=(--app="$url" --user-data-dir="$profile" --class=gap-ide --no-first-run --no-default-browser-check)
-for browser in chromium-browser chromium google-chrome-stable google-chrome brave-browser; do
-  if command -v "$browser" >/dev/null; then
-    "$browser" "${args[@]}" >>"$log" 2>&1
-    exit 0
-  fi
-done
-if command -v flatpak >/dev/null && flatpak info com.brave.Browser >/dev/null 2>&1; then
-  flatpak run com.brave.Browser "${args[@]}" >>"$log" 2>&1
+if [ -n "$browser" ]; then
+  open_window "$url"
+  # If a browser was already running with this profile, it took the window and
+  # our command returned at once; keep serving until that browser exits.
+  while pid="$(profile_browser_pid)"; do
+    tail --pid="$pid" -f /dev/null 2>/dev/null || sleep 2
+  done
   exit 0
 fi
 

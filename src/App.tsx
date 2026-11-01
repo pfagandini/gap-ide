@@ -8,10 +8,11 @@ import type {
   TreeNode
 } from "../shared/types";
 import { FileTree } from "./FileTree";
-import { Editor, type SelectionInfo } from "./Editor";
+import { Editor, type Block, type EditorApi, type SelectionInfo } from "./Editor";
 import { OutputPanel } from "./OutputPanel";
 import { ConsolePanel } from "./ConsolePanel";
 import { ExportDialog, type ExportMeta } from "./ExportDialog";
+import { LatexDialog } from "./LatexDialog";
 
 interface OpenFile {
   path: string;
@@ -39,7 +40,9 @@ export default function App() {
   const [banner, setBanner] = useState<string | null>(null);
   const [exportIds, setExportIds] = useState<string[] | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [latex, setLatex] = useState<{ text: string; count: number } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const editorApi = useRef<EditorApi | null>(null);
 
   const activeFile =
     openFiles.find((file) => file.path === activePath) ?? null;
@@ -102,7 +105,8 @@ export default function App() {
             ? previous
             : [...previous, message.run]
         );
-        setPanelTab(message.run.kind === "file" ? "output" : "console");
+        if (message.run.kind === "file") setPanelTab("output");
+        else if (!message.run.sourcePath) setPanelTab("console");
         setBusyLabel(message.run.label);
       } else if (message.type === "run_output") {
         setRuns((previous) =>
@@ -129,6 +133,10 @@ export default function App() {
           )
         );
         setBusyLabel(null);
+      } else if (message.type === "runs_cleared") {
+        setRuns((previous) =>
+          previous.filter((run) => run.kind !== message.kind || run.status === "running")
+        );
       } else if (message.type === "session_state") {
         setSessionState(message.state);
         if (message.state !== "running") setBusyLabel(null);
@@ -256,7 +264,6 @@ export default function App() {
     const label = selection.isSelection
       ? `Selection ${activeFile.name}:${selection.startLine}`
       : `Line ${activeFile.name}:${selection.startLine}`;
-    setPanelTab("console");
     send({
       type: "eval",
       code: selection.text,
@@ -264,6 +271,71 @@ export default function App() {
       sourcePath: activeFile.path,
       startLine: selection.startLine
     });
+  };
+
+  const notReady = () => {
+    if (sessionReady) return false;
+    setBanner(
+      sessionBusy
+        ? "GAP is still running. Press Stop or wait for it to finish."
+        : "The GAP session is not ready. Press Restart."
+    );
+    return true;
+  };
+
+  // Shift+Enter: run one cell; its output appears under it in the editor.
+  const runBlock = (block: Block): boolean => {
+    if (!activeFile || notReady()) return false;
+    return send({
+      type: "eval",
+      code: block.code,
+      label: `Cell ${activeFile.name}:${block.startLine}`,
+      sourcePath: activeFile.path,
+      startLine: block.startLine
+    });
+  };
+
+  const runAllBlocks = (blocks?: Block[]) => {
+    if (!activeFile || notReady()) return;
+    const list = blocks ?? editorApi.current?.blocks() ?? [];
+    if (list.length === 0) {
+      setBanner("This file has no code to run.");
+      return;
+    }
+    send({
+      type: "eval_blocks",
+      sourcePath: activeFile.path,
+      blocks: list.map((block) => ({
+        ...block,
+        label: `Cell ${activeFile.name}:${block.startLine}`
+      }))
+    });
+  };
+
+  const exportLatex = async () => {
+    const ids = editorApi.current?.shownRunIds() ?? [];
+    if (!activeFile || ids.length === 0) {
+      setBanner(
+        "Run the cells first (Shift+Enter, or Run all cells); the export uses the outputs shown in the editor."
+      );
+      return;
+    }
+    try {
+      const response = await fetch("/api/export/latex", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runIds: ids })
+      });
+      if (!response.ok) throw new Error(await errorText(response));
+      const { text } = (await response.json()) as { text: string };
+      setLatex({ text, count: ids.length });
+    } catch (error) {
+      setBanner(messageOf(error));
+    }
+  };
+
+  const clearPanel = () => {
+    send({ type: "clear_runs", kind: panelTab === "output" ? "file" : "console" });
   };
 
   const evaluateInConsole = (code: string) => {
@@ -405,6 +477,14 @@ export default function App() {
             ⚡ Run selection
           </button>
           <button
+            className="button"
+            onClick={() => runAllBlocks()}
+            disabled={!activeFile || !sessionReady}
+            title="Run every cell (blocks separated by blank lines) and show each output under it (Ctrl+Shift+Enter). Shift+Enter runs one cell."
+          >
+            ▶▶ Run all cells
+          </button>
+          <button
             className="button danger"
             onClick={() => send({ type: "interrupt" })}
             disabled={!sessionBusy}
@@ -441,6 +521,14 @@ export default function App() {
             title="Download the current editor buffer as a .g file"
           >
             Export .g
+          </button>
+          <button
+            className="button"
+            onClick={() => void exportLatex()}
+            disabled={!activeFile}
+            title="Copy the cells and their outputs as a LaTeX verbatim GAP session"
+          >
+            Export LaTeX
           </button>
         </div>
       </header>
@@ -497,6 +585,12 @@ export default function App() {
                 key={activeFile.path}
                 fileKey={activeFile.path}
                 value={activeFile.content}
+                inlineRuns={runs.filter(
+                  (run) => run.kind === "console" && run.sourcePath === activeFile.path
+                )}
+                onRunBlock={runBlock}
+                onRunAllBlocks={(blocks) => runAllBlocks(blocks)}
+                apiRef={editorApi}
                 onChange={(content) =>
                   setOpenFiles((previous) =>
                     previous.map((file) =>
@@ -516,8 +610,10 @@ export default function App() {
                 <h1>Small IDE for GAP</h1>
                 <p>
                   Open a <code>.g</code> file from the tree. Press <kbd>F5</kbd>{" "}
-                  to run the whole file, or <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to
-                  evaluate the current line or selection in the shared console.
+                  to run the whole file, <kbd>Shift</kbd>+<kbd>Enter</kbd> to run
+                  the cell under the cursor (lines between blank lines) with its
+                  output shown right below it, or <kbd>Ctrl</kbd>+<kbd>Enter</kbd>{" "}
+                  for the current line or selection.
                 </p>
                 <p className="muted">
                   Run output is collected on the right. Select runs with the
@@ -547,6 +643,24 @@ export default function App() {
               <span className={`state-dot state-${sessionState}`} />
               {sessionState}
             </div>
+            <button
+              className="panel-clear"
+              onClick={clearPanel}
+              disabled={
+                !runs.some(
+                  (run) =>
+                    run.kind === (panelTab === "output" ? "file" : "console") &&
+                    run.status !== "running"
+                )
+              }
+              title={
+                panelTab === "output"
+                  ? "Clear file-run output"
+                  : "Clear the console (and the outputs shown in the editor)"
+              }
+            >
+              Clear
+            </button>
           </div>
           <div className="panel-body">
             {panelTab === "output" ? (
@@ -585,6 +699,10 @@ export default function App() {
           </>
         )}
       </footer>
+
+      {latex && (
+        <LatexDialog text={latex.text} count={latex.count} onClose={() => setLatex(null)} />
+      )}
 
       {exportIds && (
         <ExportDialog

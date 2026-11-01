@@ -15,6 +15,8 @@ export interface Run {
   startedAt: number;
   endedAt?: number;
   durationMs?: number;
+  /** For console/cell runs: each input line with the output it produced. */
+  transcript?: { input: string; output: string }[];
 }
 
 export interface TreeNode {
@@ -39,6 +41,12 @@ export type ClientMsg =
       sourcePath?: string;
       startLine?: number;
     }
+  | {
+      type: "eval_blocks";
+      sourcePath: string;
+      blocks: { code: string; label: string; startLine: number }[];
+    }
+  | { type: "clear_runs"; kind: RunKind }
   | { type: "interrupt" }
   | { type: "restart" };
 
@@ -64,5 +72,6 @@ export type ServerMsg =
       endedAt: number;
       durationMs: number;
     }
+  | { type: "runs_cleared"; kind: RunKind }
   | { type: "session_state"; state: SessionState; message?: string }
   | { type: "error"; message: string };
